@@ -1,0 +1,229 @@
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <ctime>
+#include <gmpxx.h>
+#include <gmp.h>
+
+// Structure to hold a solution
+struct Solution {
+    mpz_class x, y, z;
+    mpz_class alpha, n;
+};
+
+// Check if a GMP integer is a perfect square
+bool isPerfectSquare(const mpz_class& value, mpz_class& sqrtValue) {
+    if (value < 0) return false;
+    
+    mpz_t temp;
+    mpz_init(temp);
+    
+    // Check if perfect square and compute square root
+    int result = mpz_perfect_square_p(value.get_mpz_t());
+    
+    if (result != 0) {
+        mpz_sqrt(temp, value.get_mpz_t());
+        sqrtValue = mpz_class(temp);
+        mpz_clear(temp);
+        return true;
+    }
+    
+    mpz_clear(temp);
+    return false;
+}
+
+// Compute discriminant for given alpha and n
+// Returns true if discriminant can be computed (alpha != 0 and result is integer)
+bool computeDiscriminant(const mpz_class& alpha, const mpz_class& n, mpz_class& disc) {
+    if (alpha == 0) return false;
+    
+    // disc = (alpha + 6n)^2 + (36n^3 - 19) / alpha
+    mpz_class term1 = alpha + 6*n;
+    term1 = term1 * term1;
+    
+    mpz_class numerator = 36*n*n*n - 19;
+    
+    // Check if division is exact (must be for integer solution)
+    if (numerator % alpha != 0) {
+        return false;
+    }
+    
+    mpz_class term2 = numerator / alpha;
+    disc = term1 + term2;
+    
+    return true;
+}
+
+// Verify the solution satisfies x^3 + y^3 + z^3 = k
+bool verifySolution(const mpz_class& x, const mpz_class& y, const mpz_class& z, int k = 114) {
+    mpz_class sum = x*x*x + y*y*y + z*z*z;
+    return (sum == k);
+}
+
+// Search for solutions in a given range
+void searchSolutions(const mpz_class& nStart, const mpz_class& nEnd, 
+                    const mpz_class& alphaStart, const mpz_class& alphaEnd,
+                    const std::string& outputFile, bool verbose = true) {
+    
+    std::ofstream outFile(outputFile, std::ios::app);
+    if (!outFile.is_open()) {
+        std::cerr << "Error opening output file: " << outputFile << std::endl;
+        return;
+    }
+    
+    mpz_class totalChecked = 0;
+    mpz_class progressInterval = 100000;
+    mpz_class solutionsFound = 0;
+    
+    time_t lastUpdate = time(nullptr);
+    
+    for (mpz_class n = nStart; n <= nEnd; n++) {
+        for (mpz_class alpha = alphaStart; alpha <= alphaEnd; alpha++) {
+            if (alpha == 0) continue;
+            
+            totalChecked++;
+            
+            // Progress reporting
+            if (verbose && (totalChecked % progressInterval == 0)) {
+                time_t now = time(nullptr);
+                if (difftime(now, lastUpdate) >= 60) { // Update every minute
+                    std::cout << "Checked " << totalChecked.get_str() << " pairs" << std::endl;
+                    std::cout << "Current: n=" << n.get_str() << ", alpha=" << alpha.get_str() << std::endl;
+                    lastUpdate = now;
+                }
+            }
+            
+            // Compute discriminant
+            mpz_class disc;
+            if (!computeDiscriminant(alpha, n, disc)) continue;
+            
+            // Check if discriminant is non-negative
+            if (disc < 0) continue;
+            
+            // Check if discriminant is a perfect square
+            mpz_class sqrtDisc;
+            if (!isPerfectSquare(disc, sqrtDisc)) continue;
+            
+            // Compute x, y, z
+            mpz_class x = -alpha + sqrtDisc;
+            mpz_class y = 2*alpha + 6*n;
+            mpz_class z = -alpha - sqrtDisc;
+            
+            // Verify the solution
+            if (verifySolution(x, y, z)) {
+                solutionsFound++;
+                
+                std::cout << "\n=== SOLUTION #" << solutionsFound.get_str() << " FOUND ===" << std::endl;
+                std::cout << "n = " << n.get_str() << std::endl;
+                std::cout << "alpha = " << alpha.get_str() << std::endl;
+                std::cout << "x = " << x.get_str() << std::endl;
+                std::cout << "y = " << y.get_str() << std::endl;
+                std::cout << "z = " << z.get_str() << std::endl;
+                std::cout << "=================================\n" << std::endl;
+                
+                // Write to file immediately
+                outFile << n.get_str() << "," << alpha.get_str() << "," 
+                       << x.get_str() << "," << y.get_str() << "," 
+                       << z.get_str() << std::endl;
+                outFile.flush();
+            }
+        }
+    }
+    
+    outFile.close();
+    std::cout << "\nTotal pairs checked: " << totalChecked.get_str() << std::endl;
+    std::cout << "Solutions found: " << solutionsFound.get_str() << std::endl;
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 5) {
+        std::cerr << "Usage: " << argv[0] << " <nStart> <nEnd> <alphaStart> <alphaEnd> [outputFile] [verbose]" << std::endl;
+        std::cerr << "\nExample for testing:" << std::endl;
+        std::cerr << "  " << argv[0] << " -1000 1000 -1000 1000" << std::endl;
+        std::cerr << "\nExample for large range:" << std::endl;
+        std::cerr << "  " << argv[0] << " -1000000000000 0 -1000000000000 0 solutions.csv 1" << std::endl;
+        return 1;
+    }
+    
+    mpz_class nStart(argv[1]);
+    mpz_class nEnd(argv[2]);
+    mpz_class alphaStart(argv[3]);
+    mpz_class alphaEnd(argv[4]);
+    
+    std::string outputFile = "solutions_k114.csv";
+    if (argc > 5) outputFile = argv[5];
+    
+    bool verbose = true;
+    if (argc > 6) verbose = (std::atoi(argv[6]) != 0);
+    
+    std::cout << "=== Sum of Three Cubes Solver for k=114 ===" << std::endl;
+    std::cout << "Using GMP for arbitrary precision arithmetic" << std::endl;
+    std::cout << "\nSearch parameters:" << std::endl;
+    std::cout << "  n range: [" << nStart.get_str() << ", " << nEnd.get_str() << "]" << std::endl;
+    std::cout << "  alpha range: [" << alphaStart.get_str() << ", " << alphaEnd.get_str() << "]" << std::endl;
+    std::cout << "  Output file: " << outputFile << std::endl;
+    std::cout << "==========================================\n" << std::endl;
+    
+    // Create/append to output file with header
+    std::ofstream outFile(outputFile);
+    outFile << "n,alpha,x,y,z" << std::endl;
+    outFile.close();
+    
+    time_t startTime = time(nullptr);
+    
+    // Search for solutions
+    searchSolutions(nStart, nEnd, alphaStart, alphaEnd, outputFile, verbose);
+    
+    time_t endTime = time(nullptr);
+    double elapsedTime = difftime(endTime, startTime);
+    
+    std::cout << "\n=== Search Complete ===" << std::endl;
+    std::cout << "Time elapsed: " << elapsedTime << " seconds (" 
+              << elapsedTime/3600.0 << " hours)" << std::endl;
+    
+    return 0;
+}
+
+/*
+=== COMPILATION INSTRUCTIONS ===
+
+This program requires the GMP (GNU Multiple Precision) library.
+
+Ubuntu/Debian:
+  sudo apt-get install libgmp-dev
+  g++ -O3 -o three_cubes_solver three_cubes_solver.cpp -lgmpxx -lgmp
+
+RedHat/CentOS/Fedora:
+  sudo yum install gmp-devel
+  g++ -O3 -o three_cubes_solver three_cubes_solver.cpp -lgmpxx -lgmp
+
+macOS:
+  brew install gmp
+  g++ -O3 -o three_cubes_solver three_cubes_solver.cpp -lgmpxx -lgmp
+
+=== USAGE EXAMPLES ===
+
+Test with small range:
+  ./three_cubes_solver -1000 1000 -1000 1000
+
+Search large range (example for grid computing):
+  ./three_cubes_solver -1000000000000 0 -1000000000000 0 chunk1.csv 1
+
+For 10^40 range, split into manageable chunks:
+  ./three_cubes_solver -10000000000000000000000000000000000000000 -9000000000000000000000000000000000000000 \
+                       -10000000000000000000000000000000000000000 -9000000000000000000000000000000000000000 \
+                       chunk_n-10e40_a-10e40.csv 1
+
+=== GRID COMPUTING STRATEGY ===
+
+For Charity Engine, divide 10^40 range into chunks:
+- Split both n and alpha ranges into 1000+ chunks
+- Each worker processes one chunk
+- Example chunks:
+  Worker 1: n ∈ [-10^40, -9.99×10^39], α ∈ [-10^40, -9.99×10^39]
+  Worker 2: n ∈ [-9.99×10^39, -9.98×10^39], α ∈ [-10^40, -9.99×10^39]
+  etc.
+
+Each chunk should take hours to days to process.
+Solutions are written to CSV files that can be collected and merged.
+*/
