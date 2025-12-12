@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""
+Chunk Generator for Three Cubes Problem Grid Search
+Generates parameter range chunks for distributed computing
+"""
+
+import csv
+import sys
+from decimal import Decimal, getcontext
+
+# Set high precision for large numbers
+getcontext().prec = 50
+
+def generate_range_chunks(start, end, chunk_size):
+    """Generate chunks from start to end with given chunk size"""
+    chunks = []
+    current = Decimal(start)
+    end_val = Decimal(end)
+    chunk_sz = Decimal(chunk_size)
+    
+    while current < end_val:
+        chunk_end = min(current + chunk_sz, end_val)
+        chunks.append((current, chunk_end))
+        current = chunk_end
+    
+    return chunks
+
+def generate_2d_chunks(n_range, alpha_range, chunk_size, output_file='chunks.csv', limit=None):
+    """
+    Generate 2D parameter chunks for grid computing
+    
+    Args:
+        n_range: tuple (n_start, n_end)
+        alpha_range: tuple (alpha_start, alpha_end)
+        chunk_size: size of each chunk
+        output_file: output CSV filename
+        limit: maximum number of chunks to generate (None for all)
+    """
+    
+    n_chunks = generate_range_chunks(n_range[0], n_range[1], chunk_size)
+    alpha_chunks = generate_range_chunks(alpha_range[0], alpha_range[1], chunk_size)
+    
+    total_chunks = len(n_chunks) * len(alpha_chunks)
+    print(f"Total chunks to generate: {total_chunks}")
+    
+    if limit and total_chunks > limit:
+        print(f"Warning: Limiting to first {limit} chunks")
+    
+    with open(output_file, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['chunk_id', 'n_start', 'n_end', 'alpha_start', 'alpha_end', 
+                        'output_file', 'docker_command'])
+        
+        chunk_id = 0
+        for n_start, n_end in n_chunks:
+            for alpha_start, alpha_end in alpha_chunks:
+                chunk_id += 1
+                
+                if limit and chunk_id > limit:
+                    break
+                
+                output_filename = f'chunk_{chunk_id:08d}.csv'
+                
+                # Generate Docker command
+                docker_cmd = (
+                    f'docker run -v $PWD/output:/app/output three-cubes-solver '
+                    f'"{n_start}" "{n_end}" "{alpha_start}" "{alpha_end}" '
+                    f'/app/output/{output_filename} 1'
+                )
+                
+                writer.writerow([
+                    chunk_id,
+                    str(n_start),
+                    str(n_end),
+                    str(alpha_start),
+                    str(alpha_end),
+                    output_filename,
+                    docker_cmd
+                ])
+                
+                if chunk_id % 100 == 0:
+                    print(f"Generated {chunk_id} chunks...")
+            
+            if limit and chunk_id > limit:
+                break
+    
+    print(f"Chunk manifest written to {output_file}")
+    print(f"Total chunks generated: {chunk_id}")
+
+def generate_priority_zones(output_file='priority_chunks.csv'):
+    """
+    Generate chunks prioritizing smaller parameter ranges where solutions
+    are more likely to appear based on the paper's observations
+    """
+    
+    priority_zones = [
+        # Zone 1: Highest priority - small values
+        {
+            'name': 'Zone_1_Small',
+            'n_range': ('-1000000000000', '1000000000000'),  # ±10^12
+            'alpha_range': ('-1000000000000', '1000000000000'),
+            'chunk_size': '10000000000',  # 10^10
+            'priority': 1
+        },
+        # Zone 2: Medium priority
+        {
+            'name': 'Zone_2_Medium',
+            'n_range': ('-100000000000000000000', '100000000000000000000'),  # ±10^20
+            'alpha_range': ('-100000000000000000000', '100000000000000000000'),
+            'chunk_size': '1000000000000000000',  # 10^18
+            'priority': 2
+        },
+        # Zone 3: Large range (example - adjust based on computational budget)
+        {
+            'name': 'Zone_3_Large',
+            'n_range': ('-10000000000000000000000000000', '10000000000000000000000000000'),  # ±10^28
+            'alpha_range': ('-10000000000000000000000000000', '10000000000000000000000000000'),
+            'chunk_size': '100000000000000000000000000',  # 10^26
+            'priority': 3
+        }
+    ]
+    
+    with open(output_file, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['chunk_id', 'priority', 'zone', 'n_start', 'n_end', 
+                        'alpha_start', 'alpha_end', 'output_file', 'docker_command'])
+        
+        global_chunk_id = 0
+        
+        for zone in priority_zones:
+            print(f"\nGenerating {zone['name']} (Priority {zone['priority']})...")
+            
+            n_chunks = generate_range_chunks(
+                zone['n_range'][0], 
+                zone['n_range'][1], 
+                zone['chunk_size']
+            )
+            alpha_chunks = generate_range_chunks(
+                zone['alpha_range'][0], 
+                zone['alpha_range'][1], 
+                zone['chunk_size']
+            )
+            
+            zone_total = len(n_chunks) * len(alpha_chunks)
+            print(f"  Chunks in this zone: {zone_total}")
+            
+            for n_start, n_end in n_chunks:
+                for alpha_start, alpha_end in alpha_chunks:
+                    global_chunk_id += 1
+                    
+                    output_filename = f'chunk_p{zone["priority"]}_{global_chunk_id:08d}.csv'
+                    
+                    docker_cmd = (
+                        f'docker run -v $PWD/output:/app/output three-cubes-solver '
+                        f'"{n_start}" "{n_end}" "{alpha_start}" "{alpha_end}" '
+                        f'/app/output/{output_filename} 1'
+                    )
+                    
+                    writer.writerow([
+                        global_chunk_id,
+                        zone['priority'],
+                        zone['name'],
+                        str(n_start),
+                        str(n_end),
+                        str(alpha_start),
+                        str(alpha_end),
+                        output_filename,
+                        docker_cmd
+                    ])
+    
+    print(f"\nPriority chunk manifest written to {output_file}")
+    print(f"Total chunks across all zones: {global_chunk_id}")
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage:")
+        print("  python3 generate_chunks.py priority")
+        print("  python3 generate_chunks.py custom <n_start> <n_end> <alpha_start> <alpha_end> <chunk_size> [max_chunks]")
+        print("\nExamples:")
+        print("  python3 generate_chunks.py priority")
+        print("  python3 generate_chunks.py custom -1000000000000 1000000000000 -1000000000000 1000000000000 10000000000")
+        return
+    
+    mode = sys.argv[1]
+    
+    if mode == 'priority':
+        print("Generating priority-based chunks...")
+        generate_priority_zones('priority_chunks.csv')
+        
+    elif mode == 'custom':
+        if len(sys.argv) < 7:
+            print("Error: custom mode requires: n_start n_end alpha_start alpha_end chunk_size [max_chunks]")
+            return
+        
+        n_start = sys.argv[2]
+        n_end = sys.argv[3]
+        alpha_start = sys.argv[4]
+        alpha_end = sys.argv[5]
+        chunk_size = sys.argv[6]
+        max_chunks = int(sys.argv[7]) if len(sys.argv) > 7 else None
+        
+        print(f"Generating custom chunks...")
+        print(f"  n: [{n_start}, {n_end}]")
+        print(f"  alpha: [{alpha_start}, {alpha_end}]")
+        print(f"  chunk_size: {chunk_size}")
+        
+        generate_2d_chunks(
+            (n_start, n_end),
+            (alpha_start, alpha_end),
+            chunk_size,
+            'custom_chunks.csv',
+            max_chunks
+        )
+    
+    else:
+        print(f"Unknown mode: {mode}")
+        print("Use 'priority' or 'custom'")
+
+if __name__ == '__main__':
+    main()
