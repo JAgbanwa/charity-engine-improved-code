@@ -1,0 +1,48 @@
+FROM ubuntu:22.04
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    g++ \
+    libgmp-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create working directory
+WORKDIR /app
+
+# Copy source code
+COPY three_cubes_solver.cpp /app/
+
+# Compile the program
+RUN g++ -O3 -o three_cubes_solver three_cubes_solver.cpp -lgmpxx -lgmp
+
+# Create output directory
+RUN mkdir -p /app/output
+
+# Set environment variables
+ENV OUTPUT_DIR=/app/output
+
+# Entry point - allows passing arguments
+ENTRYPOINT ["./three_cubes_solver"]
+
+# Default arguments (can be overridden)
+CMD ["-1000", "1000", "-1000", "1000", "/app/output/solutions.csv", "1"]
+
+# Usage examples:
+# 
+# Build:
+#   docker build -t three-cubes-solver .
+#
+# Run with default small test range:
+#   docker run -v $(pwd)/output:/app/output three-cubes-solver
+#
+# Run with custom range:
+#   docker run -v $(pwd)/output:/app/output three-cubes-solver \
+#     -1000000000000 0 -1000000000000 0 /app/output/chunk1.csv 1
+#
+# Run for 10^40 range (example chunk):
+#   docker run -v $(pwd)/output:/app/output three-cubes-solver \
+#     "-10000000000000000000000000000000000000000" \
+#     "-9000000000000000000000000000000000000000" \
+#     "-10000000000000000000000000000000000000000" \
+#     "-9000000000000000000000000000000000000000" \
+#     /app/output/chunk_large.csv 1
